@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -94,7 +95,43 @@ def teacher(s):
 # ШАГ 3: СОЗДАНИЕ РЕЗЕРВУАРА
 # ==========================================
 
-N = 300
+# Вместо случайной сети — нервная система нематоды C. elegans:
+# 300 нейронов гермафродита и все синапсы между ними (Cook et al., 2019,
+# данные OpenWorm/c302). Мышцы и другие клетки выброшены.
+# Химический синапс A→B даёт вес по числу синапсов; ГАМК-ергические
+# нейроны тормозят (вес со знаком минус). Щелевые контакты (gap junctions)
+# симметричны и всегда возбуждают.
+
+reservoir = "connectome"  # "connectome" или "random" — для сравнения
+input_to = "sensory"      # "sensory" — вход только в сенсорные нейроны, "all" — во все
+
+GABA = {"DD01", "DD02", "DD03", "DD04", "DD05", "DD06",
+        "VD01", "VD02", "VD03", "VD04", "VD05", "VD06", "VD07",
+        "VD08", "VD09", "VD10", "VD11", "VD12", "VD13",
+        "RMED", "RMEL", "RMER", "RMEV", "RIS", "AVL", "DVB"}
+SENSORY = {"ADE", "ADF", "ADL", "AFD", "ALM", "ALN", "AQR", "ASE", "ASG",
+           "ASH", "ASI", "ASJ", "ASK", "AVM", "AWA", "AWB", "AWC", "BAG",
+           "CEP", "FLP", "IL1", "IL2", "OLL", "OLQ", "PDE", "PHA", "PHB",
+           "PHC", "PLM", "PLN", "PQR", "PVD", "PVM", "SDQ", "URB", "URX", "URY"}
+
+
+def load_connectome(path):
+    edges = [line.strip().split(",") for line in open(path).readlines()[1:]]
+    names = sorted({e[0] for e in edges} | {e[1] for e in edges})
+    idx = {n: i for i, n in enumerate(names)}
+    W = np.zeros((len(names), len(names)))
+    for pre, post, count, kind in edges:
+        w = np.log1p(int(count))  # 1 синапс и 50 синапсов — не в 50 раз сильнее
+        if kind == "chemical":
+            W[idx[post], idx[pre]] += -w if pre in GABA else w
+        else:
+            W[idx[post], idx[pre]] += w / 2  # контакт записан в обе стороны
+            W[idx[pre], idx[post]] += w / 2
+    return names, W
+
+
+names, W_res = load_connectome(os.path.join(os.path.dirname(__file__), "celegans_connectome.csv"))
+N = len(names)
 sparsity = 0.1
 spectral_radius = 0.9
 lr = 0.6          # leak rate: быстрая память нужна для оценки скоростей
@@ -102,17 +139,23 @@ in_scale = 1.0
 reg = 1e-3
 washout = 50
 
-W_in = np.random.uniform(-1.0, 1.0, (N, 2)) * in_scale
-bias = np.random.uniform(-0.2, 0.2, N)
-
-W_res = np.random.uniform(-1.0, 1.0, (N, N))
-W_res *= np.random.rand(N, N) < sparsity
+if reservoir == "random":
+    W_res = np.random.uniform(-1.0, 1.0, (N, N))
+    W_res *= np.random.rand(N, N) < sparsity
 W_res *= spectral_radius / np.max(np.abs(np.linalg.eigvals(W_res)))
+
+W_in = np.random.uniform(-1.0, 1.0, (N, 2)) * in_scale
+if input_to == "sensory":
+    sensory = np.array([n[:3] in SENSORY for n in names])
+    W_in[~sensory] = 0.0
+bias = np.random.uniform(-0.2, 0.2, N)
 
 obs_noise = 0.002  # шум датчиков, м и рад
 obs_scale = np.array([x_lim, 0.2])
 
-print(f"Нейронов: {N}")
+print(f"Резервуар: {reservoir}, нейронов: {N}, связей: {np.count_nonzero(W_res)}")
+if input_to == "sensory":
+    print(f"Вход только в сенсорные нейроны: {sensory.sum()} из {N}")
 print(f"Спектральный радиус: {spectral_radius}, leak rate: {lr}")
 
 
@@ -263,7 +306,7 @@ ax_cart.set_title("Резервуар управляет тележкой")
 
 # Активность резервуара: 300 нейронов как картинка 15×20
 img = ax_res.imshow(acts[0].reshape(15, 20), cmap="coolwarm", vmin=-1, vmax=1)
-ax_res.set_title("Состояния нейронов резервуара")
+ax_res.set_title("Нейроны C. elegans" if reservoir == "connectome" else "Состояния нейронов резервуара")
 ax_res.set_xticks([])
 ax_res.set_yticks([])
 fig.colorbar(img, ax=ax_res, fraction=0.035)
