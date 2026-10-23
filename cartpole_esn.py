@@ -1,0 +1,310 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+# Резервуарный контроллер для перевёрнутого маятника на тележке.
+# Резервуар видит только положение тележки x и угол θ — без скоростей.
+# Скорости он должен «вычислить» сам из памяти о прошлых входах.
+# Обучаем только выходной слой: имитируем учителя (LQR-регулятор).
+
+np.random.seed(42)
+
+# ==========================================
+# ШАГ 1: ФИЗИКА ТЕЛЕЖКИ С МАЯТНИКОМ
+# ==========================================
+
+g = 9.81       # ускорение свободного падения
+m_cart = 1.0   # масса тележки, кг
+m_pole = 0.1   # масса стержня, кг
+l = 0.5        # половина длины стержня, м
+M = m_cart + m_pole
+
+dt = 0.02      # шаг управления, 50 Гц
+F_max = 10.0   # ограничение силы мотора, Н
+x_lim = 2.4    # края рельса, м
+th_lim = 0.7   # угол падения, рад (~40°)
+
+
+def deriv(s, F):
+    x, x_dot, th, th_dot = s
+    sn, cs = np.sin(th), np.cos(th)
+    temp = (F + m_pole * l * th_dot**2 * sn) / M
+    th_acc = (g * sn - cs * temp) / (l * (4 / 3 - m_pole * cs**2 / M))
+    x_acc = temp - m_pole * l * th_acc * cs / M
+    return np.array([x_dot, x_acc, th_dot, th_acc])
+
+
+def physics_step(s, F):
+    # Рунге-Кутта 4-го порядка
+    k1 = deriv(s, F)
+    k2 = deriv(s + dt / 2 * k1, F)
+    k3 = deriv(s + dt / 2 * k2, F)
+    k4 = deriv(s + dt * k3, F)
+    return s + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
+def failed(s):
+    return abs(s[0]) > x_lim or abs(s[2]) > th_lim
+
+
+def random_state():
+    return np.array([np.random.uniform(-1, 1), 0.0,
+                     np.random.uniform(-0.2, 0.2), 0.0])
+
+# ==========================================
+# ШАГ 2: УЧИТЕЛЬ — LQR-РЕГУЛЯТОР
+# ==========================================
+
+# Линеаризуем систему в верхней точке численным дифференцированием
+eps = 1e-6
+A = np.zeros((4, 4))
+for i in range(4):
+    e = np.zeros(4)
+    e[i] = eps
+    A[:, i] = (deriv(e, 0) - deriv(-e, 0)) / (2 * eps)
+B = ((deriv(np.zeros(4), eps) - deriv(np.zeros(4), -eps)) / (2 * eps)).reshape(4, 1)
+
+# Дискретизация: Ad = exp(A·dt), Bd = ∫exp(A·τ)dτ·B
+Ad = np.eye(4)
+Bd = np.zeros((4, 4))
+term = np.eye(4)
+for k in range(1, 20):
+    Bd += term * dt / k
+    term = term @ A * dt / k
+    Ad += term
+Bd = Bd @ B
+
+# Итерации дискретного уравнения Риккати
+Q = np.diag([1.0, 0.1, 10.0, 0.1])
+R = np.array([[0.1]])
+P = Q.copy()
+for _ in range(3000):
+    K = np.linalg.solve(R + Bd.T @ P @ Bd, Bd.T @ P @ Ad)
+    P = Q + Ad.T @ P @ (Ad - Bd @ K)
+K = K.ravel()
+
+print(f"LQR: K = {np.round(K, 2)}")
+
+
+def teacher(s):
+    # Учитель видит полное состояние, включая скорости
+    return float(np.clip(-K @ s, -F_max, F_max))
+
+# ==========================================
+# ШАГ 3: СОЗДАНИЕ РЕЗЕРВУАРА
+# ==========================================
+
+N = 300
+sparsity = 0.1
+spectral_radius = 0.9
+lr = 0.6          # leak rate: быстрая память нужна для оценки скоростей
+in_scale = 1.0
+reg = 1e-3
+washout = 50
+
+W_in = np.random.uniform(-1.0, 1.0, (N, 2)) * in_scale
+bias = np.random.uniform(-0.2, 0.2, N)
+
+W_res = np.random.uniform(-1.0, 1.0, (N, N))
+W_res *= np.random.rand(N, N) < sparsity
+W_res *= spectral_radius / np.max(np.abs(np.linalg.eigvals(W_res)))
+
+obs_noise = 0.002  # шум датчиков, м и рад
+obs_scale = np.array([x_lim, 0.2])
+
+print(f"Нейронов: {N}")
+print(f"Спектральный радиус: {spectral_radius}, leak rate: {lr}")
+
+
+def observe(s):
+    # Датчики: только x и θ, с шумом
+    o = np.array([s[0], s[2]]) + np.random.normal(0, obs_noise, 2)
+    return o / obs_scale
+
+
+def reservoir_step(r, o):
+    return (1 - lr) * r + lr * np.tanh(W_res @ r + W_in @ o + bias)
+
+
+def reset_episode():
+    s = random_state()
+    r = np.zeros(N)
+    for _ in range(washout):
+        r = reservoir_step(r, observe(s))
+    return s, r
+
+# ==========================================
+# ШАГ 4: ПРОГОН СИСТЕМЫ
+# ==========================================
+
+
+def run(steps, W_out=None, beta=1.0, explore=True, kicks=True, record=False):
+    """beta — доля учителя в применяемой силе (1 = управляет учитель,
+    0 = управляет резервуар). explore — шум в силе для разнообразия данных."""
+    states, targets = [], []
+    log = {"s": [], "u": [], "u_teacher": [], "r": [], "fail": []}
+    s, r = reset_episode()
+    ou = 0.0
+    fails = 0
+
+    for _ in range(steps):
+        r = reservoir_step(r, observe(s))
+        features = np.append(r, 1.0)
+        u_teacher = teacher(s)
+        states.append(features)
+        targets.append(u_teacher)
+
+        if W_out is None:
+            u_esn = u_teacher
+        else:
+            u_esn = float(np.clip(W_out @ features, -F_max, F_max))
+
+        u = beta * u_teacher + (1 - beta) * u_esn
+        if explore:
+            ou += -0.2 * ou + 0.8 * np.random.normal()  # шум Орнштейна-Уленбека
+            u += 1.5 * ou
+
+        if record:
+            log["s"].append(s.copy())
+            log["u"].append(u)
+            log["u_teacher"].append(u_teacher)
+            log["r"].append(r.copy())
+
+        s = physics_step(s, u)
+        if kicks and np.random.rand() < 0.005:
+            s[3] += np.random.normal() * 0.8  # случайный толчок маятника
+
+        if failed(s):
+            fails += 1
+            if record:
+                log["fail"].append(len(log["s"]))
+            s, r = reset_episode()
+
+    return np.array(states), np.array(targets), fails, log
+
+
+def ridge(S, Y):
+    return np.linalg.solve(S.T @ S + reg * np.eye(S.shape[1]), S.T @ Y)
+
+# ==========================================
+# ШАГ 5: ОБУЧЕНИЕ ВЫХОДНОГО СЛОЯ
+# ==========================================
+
+# 5 минут симуляции: управляет учитель, резервуар только наблюдает
+S, Y, fails, _ = run(15000, beta=1.0)
+W_out = ridge(S, Y)
+rmse_train = np.sqrt(np.mean((S @ W_out - Y) ** 2))
+print(f"Обучение (учитель): падений {fails}, RMSE силы {rmse_train:.3f} Н")
+
+# DAgger: управляет смесь учитель/резервуар, учитель размечает
+# состояния, в которые попадает уже сам резервуар
+S2, Y2, fails, _ = run(10000, W_out=W_out, beta=0.5)
+S = np.vstack([S, S2])
+Y = np.concatenate([Y, Y2])
+W_out = ridge(S, Y)
+print(f"DAgger: падений {fails}, всего {len(Y)} примеров")
+
+# ==========================================
+# ШАГ 6: ТЕСТ — РЕЗЕРВУАР УПРАВЛЯЕТ САМ
+# ==========================================
+
+test_steps = 3000  # 60 секунд
+_, _, fails, log = run(test_steps, W_out=W_out, beta=0.0,
+                       explore=False, kicks=True, record=True)
+u_esn = np.array(log["u"])
+u_t = np.array(log["u_teacher"])
+print(f"Тест 60 с с толчками: падений {fails}")
+print(f"RMSE резервуар vs учитель: {np.sqrt(np.mean((u_esn - u_t) ** 2)):.3f} Н")
+
+# Для сравнения: тот же линейный выход, но без резервуара — только [x, θ, 1]
+_, _, _, ref = run(15000, beta=1.0, record=True)
+X_lin = np.column_stack([np.array(ref["s"])[:, [0, 2]] / obs_scale,
+                         np.ones(len(ref["s"]))])
+W_lin = ridge(X_lin, np.array(ref["u_teacher"]))
+
+s = random_state()
+lin_fails = 0
+for _ in range(test_steps):
+    o = observe(s)
+    u = float(np.clip(W_lin @ np.append(o, 1.0), -F_max, F_max))
+    s = physics_step(s, u)
+    if failed(s):
+        lin_fails += 1
+        s = random_state()
+print(f"Без резервуара (только x и угол): падений за 60 с {lin_fails}")
+
+# ==========================================
+# ШАГ 7: ВИЗУАЛИЗАЦИЯ
+# ==========================================
+
+traj = np.array(log["s"])
+acts = np.array(log["r"])
+t = np.arange(test_steps) * dt
+
+fig = plt.figure(figsize=(14, 8))
+ax_cart = fig.add_subplot(2, 2, 1)
+ax_res = fig.add_subplot(2, 2, 2)
+ax_th = fig.add_subplot(2, 2, 3)
+ax_f = fig.add_subplot(2, 2, 4)
+
+# Тележка и маятник
+ax_cart.set_xlim(-x_lim - 0.3, x_lim + 0.3)
+ax_cart.set_ylim(-0.4, 1.3)
+ax_cart.set_aspect("equal")
+ax_cart.axhline(0, color="gray", linewidth=2)
+for edge in (-x_lim, x_lim):
+    ax_cart.axvline(edge, color="red", alpha=0.3)
+cart = plt.Rectangle((0, -0.1), 0.4, 0.2, color="tab:blue")
+ax_cart.add_patch(cart)
+pole, = ax_cart.plot([], [], color="tab:orange", linewidth=5, solid_capstyle="round")
+force_arrow, = ax_cart.plot([], [], color="tab:green", linewidth=3)
+info = ax_cart.text(-x_lim, 1.15, "", fontsize=10)
+ax_cart.set_title("Резервуар управляет тележкой")
+
+# Активность резервуара: 300 нейронов как картинка 15×20
+img = ax_res.imshow(acts[0].reshape(15, 20), cmap="coolwarm", vmin=-1, vmax=1)
+ax_res.set_title("Состояния нейронов резервуара")
+ax_res.set_xticks([])
+ax_res.set_yticks([])
+fig.colorbar(img, ax=ax_res, fraction=0.035)
+
+# Угол и положение
+ax_th.plot(t, traj[:, 2], label="θ, рад", color="tab:orange")
+ax_th.plot(t, traj[:, 0], label="x, м", color="tab:blue", alpha=0.7)
+for k in log["fail"]:
+    ax_th.axvline(k * dt, color="red", linestyle=":")
+cursor_th = ax_th.axvline(0, color="black", alpha=0.5)
+ax_th.set_xlabel("Время, с")
+ax_th.legend(loc="upper right")
+ax_th.grid(True, alpha=0.3)
+
+# Сила: резервуар vs что сделал бы учитель
+ax_f.plot(t, u_t, label="Учитель LQR (полное состояние)", color="tab:blue", alpha=0.65)
+ax_f.plot(t, u_esn, label="Резервуар (только x, θ)", color="tab:red", linestyle="--")
+cursor_f = ax_f.axvline(0, color="black", alpha=0.5)
+ax_f.set_xlabel("Время, с")
+ax_f.set_ylabel("Сила, Н")
+ax_f.legend(loc="upper right")
+ax_f.grid(True, alpha=0.3)
+
+plt.tight_layout()
+
+frame_step = 2
+
+
+def update(i):
+    k = i * frame_step
+    x, _, th, _ = traj[k]
+    cart.set_x(x - 0.2)
+    pole.set_data([x, x + 2 * l * np.sin(th)], [0, 2 * l * np.cos(th)])
+    force_arrow.set_data([x, x + u_esn[k] * 0.05], [-0.25, -0.25])
+    info.set_text(f"t = {t[k]:5.2f} с   θ = {np.degrees(th):+5.1f}°   F = {u_esn[k]:+5.1f} Н")
+    img.set_data(acts[k].reshape(15, 20))
+    cursor_th.set_xdata([t[k], t[k]])
+    cursor_f.set_xdata([t[k], t[k]])
+    return cart, pole, force_arrow, info, img, cursor_th, cursor_f
+
+
+anim = FuncAnimation(fig, update, frames=test_steps // frame_step,
+                     interval=dt * frame_step * 1000, blit=False)
+plt.show()

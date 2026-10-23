@@ -1,0 +1,880 @@
+<meta charset="utf-8">
+<title>Резервуар-балансир</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@600&display=swap">
+<style>
+/* Лабораторный стенд: сцена крупно слева, резервуар справа, под ними пульт и три осциллограммы */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --ink: #16202b;
+  --muted: #5b6876;
+  --line: #d6dde4;
+  --grid: #e7ecf0;
+  --teacher: #3461c1;
+  --esn: #c23a6b;
+  --neg: #1f8f8a;
+  --pos: #e07b2a;
+  --neutral: #c9d1d9;
+  --warn: #d23b3b;
+  --f-display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --f-body: "Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1319; --surface: #161d25; --ink: #e5ebf1; --muted: #94a2b1; --line: #2a3441; --grid: #1f2731;
+    --teacher: #7da0ff; --esn: #ff6f9f; --neg: #3cc4bc; --pos: #ffa25a; --neutral: #3a4655; --warn: #ff6b6b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1319; --surface: #161d25; --ink: #e5ebf1; --muted: #94a2b1; --line: #2a3441; --grid: #1f2731;
+  --teacher: #7da0ff; --esn: #ff6f9f; --neg: #3cc4bc; --pos: #ffa25a; --neutral: #3a4655; --warn: #ff6b6b;
+  color-scheme: dark;
+}
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap {
+  max-width: 1220px; margin: 0 auto; display: grid; gap: 16px;
+  padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+header { display: grid; gap: 8px; }
+.eyebrow { margin: 0; font-family: var(--f-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+h1 { margin: 0; font-family: var(--f-display); font-weight: 600; font-size: clamp(24px, 3.6vw, 38px); line-height: 1.15; text-wrap: balance; }
+.lede { margin: 0; max-width: 72ch; color: var(--muted); }
+.lede b { color: var(--ink); font-weight: 600; }
+h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+.lab { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; }
+.charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 900px) { .lab, .charts { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; display: grid; gap: 10px; align-content: start; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+canvas { display: block; width: 100%; max-width: 100%; touch-action: manipulation; }
+#stage { aspect-ratio: 2.1 / 1; cursor: crosshair; }
+#res { aspect-ratio: 1.3 / 1; }
+.chart { aspect-ratio: 2.3 / 1; }
+.hint { margin: 0; font-size: 13px; color: var(--muted); }
+
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px; font-weight: 600; font-size: 13px;
+  color: var(--drv); background: color-mix(in srgb, var(--drv) 13%, var(--surface)); border: 1px solid color-mix(in srgb, var(--drv) 35%, var(--surface)); }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--drv); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 3px; border-radius: 2px; background: var(--c); display: inline-block; }
+.sw.dash { background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); display: inline-block; }
+
+.controls { gap: 16px; }
+.modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 700px) { .modes { grid-template-columns: minmax(0, 1fr); } }
+.seg { --drv: var(--teacher); text-align: left; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; display: grid; gap: 2px; }
+.seg small { color: var(--muted); font-size: 12px; }
+.seg .n { font-family: var(--f-mono); font-size: 12px; color: var(--drv); }
+.seg[data-mode="esn"], .seg[data-mode="dagger"] { --drv: var(--esn); }
+.seg[aria-pressed="true"] { border-color: var(--drv); background: color-mix(in srgb, var(--drv) 10%, var(--surface)); box-shadow: inset 0 0 0 1px var(--drv); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn { font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+.btn:hover, .seg:hover { border-color: var(--muted); }
+.btn kbd { font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--teacher); outline-offset: 2px; }
+.sep { flex: 1 1 auto; }
+
+.progress { display: grid; gap: 6px; }
+.bar { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--teacher); transition: width 0.2s; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; }
+.checks label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+input[type="checkbox"], input[type="range"] { accent-color: var(--esn); }
+
+.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 20px; }
+.sl { display: grid; gap: 2px; font-size: 13px; }
+.sl .top { display: flex; justify-content: space-between; gap: 8px; }
+.sl output { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.sl input { width: 100%; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 0; }
+.stats div { display: grid; gap: 0; }
+.stats dt { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.stats dd { margin: 0; font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; }
+.stats dd small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.note { margin: 0; font-size: 13px; color: var(--muted); border-left: 3px solid var(--line); padding-left: 10px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Echo State Network · тележка с маятником</p>
+    <h1>Резервуар держит маятник</h1>
+    <p class="lede">Учитель, LQR-регулятор, видит полное состояние системы. <b>Резервуар видит только положение тележки и угол, без скоростей.</b> Внутренние связи резервуара случайны и не меняются. Обучается только линейный выход, методом рекурсивных наименьших квадратов прямо во время симуляции. Скорости резервуар восстанавливает из памяти о недавних входах.</p>
+  </header>
+
+  <section class="lab">
+    <div class="panel">
+      <div class="panel-head">
+        <span id="driver" class="pill">Управляет учитель</span>
+        <span class="mono hint" id="clock">t = 0.0 с</span>
+      </div>
+      <canvas id="stage" aria-label="Тележка с маятником"></canvas>
+      <p class="hint">Клик по сцене толкает маятник от точки клика. Клавиши ← → тоже толкают, пробел ставит на паузу.</p>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Резервуар</h2>
+        <span class="mono hint" id="res-meta"></span>
+      </div>
+      <canvas id="res" aria-label="Активность нейронов резервуара"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="--c: var(--neg)"></i>активация −1</span>
+        <span><i class="dot" style="--c: var(--pos)"></i>активация +1</span>
+        <span>размер = |вес выхода|</span>
+        <span>линии к F = вклад в силу</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel controls" aria-label="Пульт">
+    <div class="modes" role="group" aria-label="Кто управляет">
+      <button class="seg" data-mode="teacher" aria-pressed="true"><span class="n">1</span>Учитель управляет<small>резервуар смотрит и учится</small></button>
+      <button class="seg" data-mode="esn" aria-pressed="false"><span class="n">2</span>Резервуар управляет<small>обучение остановлено</small></button>
+      <button class="seg" data-mode="dagger" aria-pressed="false"><span class="n">3</span>Резервуар управляет и доучивается<small>учитель только подсказывает (DAgger)</small></button>
+    </div>
+
+    <div class="row">
+      <button class="btn" id="pause">Пауза <kbd>пробел</kbd></button>
+      <button class="btn" id="kickL">Толкнуть <kbd>←</kbd></button>
+      <button class="btn" id="kickR">Толкнуть <kbd>→</kbd></button>
+      <button class="btn" id="resetEp">Новый эпизод</button>
+      <span class="sep"></span>
+      <button class="btn" id="resetOut">Забыть обучение</button>
+      <button class="btn" id="newRes">Новый резервуар</button>
+    </div>
+
+    <div class="progress">
+      <div class="row" style="justify-content: space-between">
+        <span class="hint" id="train-label">Обучено 0 с симуляции</span>
+        <label class="hint" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="autoSwitch" checked> передать управление резервуару после 90 с</label>
+      </div>
+      <div class="bar"><i id="train-bar"></i></div>
+    </div>
+
+    <dl class="stats">
+      <div><dt>Эпизод</dt><dd id="st-ep">0.0 <small>с</small></dd></div>
+      <div><dt>Рекорд резервуара</dt><dd id="st-best">— </dd></div>
+      <div><dt>Падения учитель / резервуар</dt><dd id="st-fails">0 / 0</dd></div>
+      <div><dt>Ошибка выхода, RMSE</dt><dd id="st-rmse">— </dd></div>
+    </dl>
+
+    <p class="note" id="note">Учитель держит маятник с небольшим случайным шумом, чтобы резервуар увидел разные состояния. Каждый шаг выходной слой подстраивается под силу учителя.</p>
+
+    <div class="checks">
+      <label><input type="checkbox" id="seeVel"> резервуар видит скорости</label>
+      <label><input type="checkbox" id="kicks" checked> случайные толчки</label>
+      <label><input type="checkbox" id="explore" checked> шум учителя при обучении</label>
+    </div>
+
+    <div class="sliders">
+      <div class="sl"><div class="top"><label for="sN">Нейронов N</label><output id="oN">300</output></div><input type="range" id="sN" min="50" max="500" step="50" value="300"></div>
+      <div class="sl"><div class="top"><label for="sRho">Спектральный радиус ρ</label><output id="oRho">0.90</output></div><input type="range" id="sRho" min="0" max="1.5" step="0.05" value="0.9"></div>
+      <div class="sl"><div class="top"><label for="sLeak">Leak rate a</label><output id="oLeak">0.60</output></div><input type="range" id="sLeak" min="0.05" max="1" step="0.05" value="0.6"></div>
+      <div class="sl"><div class="top"><label for="sIn">Масштаб входа</label><output id="oIn">1.00</output></div><input type="range" id="sIn" min="0.1" max="3" step="0.1" value="1"></div>
+      <div class="sl"><div class="top"><label for="sNoise">Шум датчиков, мм и мрад</label><output id="oNoise">2</output></div><input type="range" id="sNoise" min="0" max="20" step="1" value="2"></div>
+      <div class="sl"><div class="top"><label for="sSpeed">Скорость симуляции</label><output id="oSpeed">3×</output></div><input type="range" id="sSpeed" min="1" max="20" step="1" value="3"></div>
+    </div>
+    <p class="hint">Попробуйте после обучения поставить ρ = 0 и a = 1. Резервуар теряет память, оценить скорости ему не из чего, и маятник падает.</p>
+  </section>
+
+  <section class="charts">
+    <div class="panel">
+      <h2>Угол θ, градусы</h2>
+      <canvas class="chart" id="chTh"></canvas>
+      <div class="legend"><span><i class="sw" style="--c: var(--ink)"></i>θ</span><span><i class="sw dash" style="--c: var(--warn)"></i>порог падения ±40°</span></div>
+    </div>
+    <div class="panel">
+      <h2>Сила на тележку, Н</h2>
+      <canvas class="chart" id="chF"></canvas>
+      <div class="legend"><span><i class="sw" style="--c: var(--teacher)"></i>учитель</span><span><i class="sw" style="--c: var(--esn)"></i>резервуар</span></div>
+    </div>
+    <div class="panel">
+      <h2>Ошибка резервуара, RMSE Н</h2>
+      <canvas class="chart" id="chErr"></canvas>
+      <div class="legend"><span><i class="dot" style="--c: var(--teacher)"></i>пока управляет учитель</span><span><i class="dot" style="--c: var(--esn)"></i>пока управляет резервуар</span></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- случайные числа ----------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+let rand = mulberry32(42);
+let spare = null;
+function randn() {
+  if (spare !== null) { const s = spare; spare = null; return s; }
+  let u, v, q;
+  do { u = rand() * 2 - 1; v = rand() * 2 - 1; q = u * u + v * v; } while (q >= 1 || q === 0);
+  const m = Math.sqrt(-2 * Math.log(q) / q);
+  spare = v * m;
+  return u * m;
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- физика ----------
+const G = 9.81, MC = 1.0, MP = 0.1, L = 0.5, MT = MC + MP;
+const DT = 0.02, FMAX = 10, XLIM = 2.4, THLIM = 0.7;
+
+function deriv(s, F, out) {
+  const th = s[2], thd = s[3];
+  const sn = Math.sin(th), cs = Math.cos(th);
+  const temp = (F + MP * L * thd * thd * sn) / MT;
+  const tha = (G * sn - cs * temp) / (L * (4 / 3 - MP * cs * cs / MT));
+  out[0] = s[1]; out[1] = temp - MP * L * tha * cs / MT; out[2] = thd; out[3] = tha;
+  return out;
+}
+const k1 = new Float64Array(4), k2 = new Float64Array(4), k3 = new Float64Array(4), k4 = new Float64Array(4), tmp = new Float64Array(4);
+function rk4(s, F) {
+  deriv(s, F, k1);
+  for (let i = 0; i < 4; i++) tmp[i] = s[i] + DT / 2 * k1[i];
+  deriv(tmp, F, k2);
+  for (let i = 0; i < 4; i++) tmp[i] = s[i] + DT / 2 * k2[i];
+  deriv(tmp, F, k3);
+  for (let i = 0; i < 4; i++) tmp[i] = s[i] + DT * k3[i];
+  deriv(tmp, F, k4);
+  for (let i = 0; i < 4; i++) s[i] += DT / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+}
+
+// ---------- учитель: LQR ----------
+function lqrGain() {
+  const eps = 1e-6, z = new Float64Array(4);
+  const A = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]], B = [0,0,0,0];
+  const dp = new Float64Array(4), dm = new Float64Array(4);
+  for (let i = 0; i < 4; i++) {
+    const e = new Float64Array(4);
+    e[i] = eps; deriv(e, 0, dp);
+    e[i] = -eps; deriv(e, 0, dm);
+    for (let r = 0; r < 4; r++) A[r][i] = (dp[r] - dm[r]) / (2 * eps);
+  }
+  deriv(z, eps, dp); deriv(z, -eps, dm);
+  for (let r = 0; r < 4; r++) B[r] = (dp[r] - dm[r]) / (2 * eps);
+
+  const mm = (a, b) => a.map((row) => b[0].map((_, j) => row.reduce((s, v, k) => s + v * b[k][j], 0)));
+  const eye = () => [0,1,2,3].map((i) => [0,1,2,3].map((j) => +(i === j)));
+  let Ad = eye(), S = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]], term = eye();
+  for (let k = 1; k < 20; k++) {
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) S[i][j] += term[i][j] * DT / k;
+    term = mm(term, A).map((row) => row.map((v) => v * DT / k));
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) Ad[i][j] += term[i][j];
+  }
+  const Bd = S.map((row) => row.reduce((s, v, k) => s + v * B[k], 0));
+  const Qd = [1, 0.1, 10, 0.1], R = 0.1;
+  let P = [0,1,2,3].map((i) => [0,1,2,3].map((j) => (i === j ? Qd[i] : 0)));
+  let K = [0, 0, 0, 0];
+  for (let it = 0; it < 3000; it++) {
+    const BP = [0,1,2,3].map((k) => Bd.reduce((s, v, r) => s + v * P[r][k], 0)); // Bdᵀ·P
+    const den = R + BP.reduce((s, v, k) => s + v * Bd[k], 0);
+    K = [0,1,2,3].map((j) => BP.reduce((s, v, k) => s + v * Ad[k][j], 0) / den);
+    const Acl = Ad.map((row, i) => row.map((v, j) => v - Bd[i] * K[j]));
+    const PA = mm(P, Acl);
+    const Pn = [0,1,2,3].map((i) => [0,1,2,3].map((j) => {
+      let s = i === j ? Qd[i] : 0;
+      for (let k = 0; k < 4; k++) s += Ad[k][i] * PA[k][j];
+      return s;
+    }));
+    // симметризуем, иначе ошибки округления раскачивают итерации
+    P = Pn.map((row, i) => row.map((v, j) => (v + Pn[j][i]) / 2));
+  }
+  return K;
+}
+const K = lqrGain();
+const teacher = (s) => clamp(-(K[0] * s[0] + K[1] * s[1] + K[2] * s[2] + K[3] * s[3]), -FMAX, FMAX);
+
+// ---------- резервуар ----------
+const P_ = { rho: 0.9, leak: 0.6, inScale: 1, noise: 0.002, speed: 3, seeVel: false, kicks: true, explore: true, autoSwitch: true };
+let seed = 42;
+let R = null; // текущий резервуар
+
+function buildReservoir(N) {
+  rand = mulberry32(seed); spare = null;
+  const rowPtr = new Int32Array(N + 1), cols = [], vals = [];
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) if (rand() < 0.1) { cols.push(j); vals.push(rand() * 2 - 1); }
+    rowPtr[i + 1] = cols.length;
+  }
+  const col = Int32Array.from(cols), val = Float64Array.from(vals);
+  // спектральный радиус: средний рост нормы при степенных итерациях
+  let v = new Float64Array(N).map(() => rand() - 0.5), w2 = new Float64Array(N), logSum = 0;
+  for (let it = 0; it < 400; it++) {
+    for (let i = 0; i < N; i++) { let s = 0; for (let k = rowPtr[i]; k < rowPtr[i + 1]; k++) s += val[k] * v[col[k]]; w2[i] = s; }
+    let n = 0; for (let i = 0; i < N; i++) n += w2[i] * w2[i];
+    n = Math.sqrt(n) || 1;
+    if (it >= 200) logSum += Math.log(n);
+    for (let i = 0; i < N; i++) v[i] = w2[i] / n;
+  }
+  const rho0 = Math.exp(logSum / 200);
+  for (let k = 0; k < val.length; k++) val[k] /= rho0;
+
+  const Win = new Float64Array(N * 4).map(() => rand() * 2 - 1);
+  const b = new Float64Array(N).map(() => (rand() * 2 - 1) * 0.2);
+  const M = N + 1;
+
+  // раскладка «подсолнух» и самые сильные связи для рисования
+  const edgesAll = [];
+  for (let i = 0; i < N; i++) for (let k = rowPtr[i]; k < rowPtr[i + 1]; k++) edgesAll.push([col[k], i, Math.abs(val[k])]);
+  edgesAll.sort((a, c) => c[2] - a[2]);
+  const edges = edgesAll.slice(0, Math.min(450, edgesAll.length));
+  const inTop = [0, 1, 2, 3].map((c) => [...Array(N).keys()].sort((a, d) => Math.abs(Win[d * 4 + c]) - Math.abs(Win[a * 4 + c])).slice(0, 10));
+
+  R = {
+    N, M, rowPtr, col, val, Win, b, edges, inTop,
+    r: new Float64Array(N), rn: new Float64Array(N),
+    f: new Float64Array(M), w: new Float64Array(M),
+    P: new Float64Array(M * M), Pf: new Float64Array(M),
+    pos: null,
+  };
+  resetReadout();
+}
+
+function resetReadout() {
+  R.w.fill(0); R.P.fill(0);
+  for (let i = 0; i < R.M; i++) R.P[i * R.M + i] = 100; // P0 = I/δ, δ = 0.01
+  sim.trainSteps = 0; sim.curve = []; sim.best = 0;
+}
+
+function esnStep(o) {
+  const { N, rowPtr, col, val, Win, b, r, rn } = R;
+  const a = P_.leak, rho = P_.rho, sc = P_.inScale;
+  for (let i = 0; i < N; i++) {
+    let s = 0;
+    for (let k = rowPtr[i]; k < rowPtr[i + 1]; k++) s += val[k] * r[col[k]];
+    const wi = i * 4;
+    const u = Win[wi] * o[0] + Win[wi + 1] * o[1] + Win[wi + 2] * o[2] + Win[wi + 3] * o[3];
+    rn[i] = (1 - a) * r[i] + a * Math.tanh(rho * s + sc * u + b[i]);
+  }
+  R.r = rn; R.rn = r;
+}
+
+function readout() {
+  const { N, f, w } = R;
+  for (let i = 0; i < N; i++) f[i] = R.r[i];
+  f[N] = 1;
+  let y = 0;
+  for (let i = 0; i <= N; i++) y += w[i] * f[i];
+  return y;
+}
+
+// рекурсивные наименьшие квадраты, λ = 1
+function rlsUpdate(y) {
+  const { M, f, w, P, Pf } = R;
+  let den = 1, e = y;
+  for (let i = 0; i < M; i++) {
+    let s = 0; const base = i * M;
+    for (let j = 0; j < M; j++) s += P[base + j] * f[j];
+    Pf[i] = s; den += f[i] * s; e -= w[i] * f[i];
+  }
+  const g = e / den;
+  for (let i = 0; i < M; i++) w[i] += Pf[i] * g;
+  for (let i = 0; i < M; i++) {
+    const c = Pf[i] / den, base = i * M;
+    if (c === 0) continue;
+    for (let j = 0; j < M; j++) P[base + j] -= c * Pf[j];
+  }
+}
+
+// ---------- симуляция ----------
+const HIST = 500; // 10 с
+const sim = {
+  s: new Float64Array(4), mode: 'teacher', paused: false, ou: 0, t: 0, epT: 0, best: 0,
+  fails: { teacher: 0, esn: 0 }, trainSteps: 0, curve: [], errAcc: 0, errN: 0, lastRmse: NaN,
+  kick: 0, kickFlash: 0, kickDir: 0, failFlash: 0, lastU: 0, lastUT: 0, lastUE: 0,
+  h: { th: new Float32Array(HIST), uT: new Float32Array(HIST), uE: new Float32Array(HIST), head: 0, len: 0 },
+};
+const obs = new Float64Array(4);
+
+function observe() {
+  const s = sim.s, n = P_.noise;
+  obs[0] = (s[0] + n * randn()) / XLIM;
+  obs[1] = (s[2] + n * randn()) / 0.2;
+  if (P_.seeVel) { obs[2] = (s[1] + 5 * n * randn()) / 2; obs[3] = (s[3] + 5 * n * randn()) / 2; }
+  else { obs[2] = 0; obs[3] = 0; }
+  return obs;
+}
+
+function resetEpisode() {
+  const s = sim.s;
+  s[0] = rand() * 2 - 1; s[1] = 0; s[2] = (rand() * 2 - 1) * 0.2; s[3] = 0;
+  R.r.fill(0);
+  for (let i = 0; i < 50; i++) esnStep(observe());
+  sim.epT = 0; sim.ou = 0;
+}
+
+function simStep() {
+  const s = sim.s;
+  esnStep(observe());
+  const uE = clamp(readout(), -FMAX, FMAX);
+  const uT = teacher(s);
+  let u;
+  if (sim.mode === 'teacher') {
+    u = uT;
+    if (P_.explore) { sim.ou += -0.2 * sim.ou + 0.8 * randn(); u += 1.5 * sim.ou; }
+    rlsUpdate(uT); sim.trainSteps++;
+  } else {
+    u = uE;
+    if (sim.mode === 'dagger') { rlsUpdate(uT); sim.trainSteps++; }
+  }
+  u = clamp(u, -FMAX, FMAX);
+  sim.lastU = u; sim.lastUT = uT; sim.lastUE = uE;
+
+  sim.errAcc += (uE - uT) * (uE - uT); sim.errN++;
+  if (sim.errN === 50) {
+    sim.lastRmse = Math.sqrt(sim.errAcc / 50);
+    sim.curve.push([sim.t, sim.lastRmse, sim.mode === 'teacher' ? 0 : 1]);
+    if (sim.curve.length > 4000) sim.curve.splice(0, sim.curve.length - 4000);
+    sim.errAcc = 0; sim.errN = 0;
+  }
+
+  rk4(s, u);
+  if (sim.kick) { s[3] += sim.kick; sim.kick = 0; }
+  if (P_.kicks && rand() < 0.005) { const d = randn() * 0.6; s[3] += d; sim.kickFlash = 0.4; sim.kickDir = Math.sign(d); }
+
+  const h = sim.h;
+  h.th[h.head] = s[2]; h.uT[h.head] = uT; h.uE[h.head] = uE;
+  h.head = (h.head + 1) % HIST; h.len = Math.min(HIST, h.len + 1);
+
+  sim.t += DT; sim.epT += DT;
+  if (sim.mode !== 'teacher') sim.best = Math.max(sim.best, sim.epT);
+  if (Math.abs(s[0]) > XLIM || Math.abs(s[2]) > THLIM) {
+    sim.fails[sim.mode === 'teacher' ? 'teacher' : 'esn']++;
+    sim.failFlash = 0.6;
+    resetEpisode();
+  }
+  if (sim.mode === 'teacher' && P_.autoSwitch && sim.trainSteps >= 4500) {
+    $('autoSwitch').checked = false; P_.autoSwitch = false;
+    setMode('esn');
+  }
+}
+
+function kick(dir) {
+  sim.kick += dir * 1.2;
+  sim.kickFlash = 0.5; sim.kickDir = dir;
+}
+
+// ---------- интерфейс ----------
+const $ = (id) => document.getElementById(id);
+const NOTES = {
+  teacher: 'Учитель держит маятник с небольшим случайным шумом, чтобы резервуар увидел разные состояния. Каждый шаг выходной слой подстраивается под силу учителя.',
+  esn: 'Силу задаёт только выход резервуара. Учитель продолжает считать свою силу для сравнения на графике, но ни на что не влияет.',
+  dagger: 'Управляет резервуар, а учитель размечает состояния, в которые попадает уже сам резервуар. Так исправляются ошибки, которых не было в данных учителя.',
+};
+function setMode(m) {
+  sim.mode = m;
+  document.querySelectorAll('.seg').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
+  const d = $('driver');
+  d.textContent = m === 'teacher' ? 'Управляет учитель · резервуар учится' : m === 'esn' ? 'Управляет резервуар' : 'Управляет резервуар · доучивается';
+  d.style.setProperty('--drv', m === 'teacher' ? 'var(--teacher)' : 'var(--esn)');
+  sim.epT = 0;
+  updateNote();
+}
+function updateNote() {
+  let t = NOTES[sim.mode];
+  if (sim.mode !== 'teacher' && sim.trainSteps < 500) t = 'Резервуар ещё почти не обучен: выход близок к нулю, маятник будет падать. Сначала дайте поуправлять учителю.';
+  $('note').textContent = t;
+}
+document.querySelectorAll('.seg').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+function setPaused(p) { sim.paused = p; $('pause').firstChild.textContent = p ? 'Пуск ' : 'Пауза '; }
+$('pause').addEventListener('click', () => setPaused(!sim.paused));
+$('kickL').addEventListener('click', () => kick(-1));
+$('kickR').addEventListener('click', () => kick(1));
+$('resetEp').addEventListener('click', () => resetEpisode());
+$('resetOut').addEventListener('click', () => { resetReadout(); sim.fails.teacher = 0; sim.fails.esn = 0; setMode('teacher'); });
+$('newRes').addEventListener('click', () => { seed++; rebuild(); });
+$('autoSwitch').addEventListener('change', (e) => { P_.autoSwitch = e.target.checked; });
+$('kicks').addEventListener('change', (e) => { P_.kicks = e.target.checked; });
+$('explore').addEventListener('change', (e) => { P_.explore = e.target.checked; });
+$('seeVel').addEventListener('change', (e) => { P_.seeVel = e.target.checked; resetReadout(); setMode('teacher'); });
+
+function rebuild() {
+  buildReservoir(+$('sN').value);
+  sim.fails.teacher = 0; sim.fails.esn = 0;
+  resetEpisode(); setMode('teacher');
+  layoutRes();
+}
+const sliders = [
+  ['sN', 'oN', (v) => v, null],
+  ['sRho', 'oRho', (v) => v.toFixed(2), (v) => { P_.rho = v; }],
+  ['sLeak', 'oLeak', (v) => v.toFixed(2), (v) => { P_.leak = v; }],
+  ['sIn', 'oIn', (v) => v.toFixed(2), (v) => { P_.inScale = v; }],
+  ['sNoise', 'oNoise', (v) => v, (v) => { P_.noise = v / 1000; }],
+  ['sSpeed', 'oSpeed', (v) => v + '×', (v) => { P_.speed = v; }],
+];
+for (const [id, oid, fmt, apply] of sliders) {
+  const el = $(id);
+  const sync = () => { const v = +el.value; $(oid).textContent = fmt(v); if (apply) apply(v); };
+  el.addEventListener('input', sync);
+  sync();
+}
+$('sN').addEventListener('change', rebuild);
+
+window.addEventListener('keydown', (e) => {
+  const tag = e.target.tagName;
+  if (e.key === 'ArrowLeft' && tag !== 'INPUT') { kick(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight' && tag !== 'INPUT') { kick(1); e.preventDefault(); }
+  else if (e.key === ' ' && tag !== 'INPUT' && tag !== 'BUTTON') { setPaused(!sim.paused); e.preventDefault(); }
+});
+
+// ---------- цвета темы ----------
+const C = {};
+function hexRgb(h) {
+  h = h.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h, 16);
+  return [n >> 16 & 255, n >> 8 & 255, n & 255];
+}
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ['bg', 'surface', 'ink', 'muted', 'line', 'grid', 'teacher', 'esn', 'neg', 'pos', 'neutral', 'warn']) {
+    C[k] = cs.getPropertyValue('--' + k).trim();
+    C[k + 'Rgb'] = hexRgb(C[k]);
+  }
+}
+readColors();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors);
+new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+const rgba = (rgb, a) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+function mixRgb(a, b, t) { return `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},${Math.round(a[2] + (b[2] - a[2]) * t)})`; }
+
+// ---------- холсты ----------
+const canvases = {};
+function setupCanvas(id) {
+  const cv = $(id), ctx = cv.getContext('2d');
+  const o = { cv, ctx, w: 0, h: 0 };
+  const fit = () => {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    o.w = r.width; o.h = r.height;
+    cv.width = Math.max(1, Math.round(r.width * dpr)); cv.height = Math.max(1, Math.round(r.height * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (id === 'res') layoutRes();
+  };
+  new ResizeObserver(fit).observe(cv);
+  canvases[id] = o;
+  fit();
+  return o;
+}
+
+// сцена
+const stage = setupCanvas('stage');
+function stageGeom() {
+  const { w, h } = stage;
+  const sc = Math.min(w / 5.9, (h - 60) / 1.3);
+  return { sc, cx: w / 2, gy: h - 46 };
+}
+stage.cv.addEventListener('pointerdown', (e) => {
+  const r = stage.cv.getBoundingClientRect();
+  const { sc, cx } = stageGeom();
+  const tipX = cx + (sim.s[0] + 2 * L * Math.sin(sim.s[2])) * sc;
+  kick(e.clientX - r.left < tipX ? 1 : -1);
+});
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function arrow(ctx, x0, y, len, color, dashed) {
+  if (Math.abs(len) < 1) return;
+  const dir = Math.sign(len), x1 = x0 + len;
+  ctx.save();
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  if (dashed) ctx.setLineDash([5, 4]);
+  ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1 - dir * 6, y); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x1 - dir * 9, y - 6); ctx.lineTo(x1 - dir * 9, y + 6); ctx.closePath();
+  if (dashed) { ctx.lineWidth = 1.5; ctx.stroke(); } else ctx.fill();
+  ctx.restore();
+}
+
+function drawStage(dtReal) {
+  const { ctx, w, h } = stage;
+  const { sc, cx, gy } = stageGeom();
+  ctx.clearRect(0, 0, w, h);
+  const X = (m) => cx + m * sc;
+
+  // запретные зоны за краями рельса
+  ctx.fillStyle = rgba(C.warnRgb, 0.08);
+  ctx.fillRect(0, 0, X(-XLIM), gy);
+  ctx.fillRect(X(XLIM), 0, w - X(XLIM), gy);
+  ctx.strokeStyle = rgba(C.warnRgb, 0.5); ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+  for (const e of [-XLIM, XLIM]) { ctx.beginPath(); ctx.moveTo(X(e), 8); ctx.lineTo(X(e), gy); ctx.stroke(); }
+  ctx.setLineDash([]);
+
+  // рельс и шкала в метрах
+  ctx.strokeStyle = C.muted; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(X(-2.8), gy); ctx.lineTo(X(2.8), gy); ctx.stroke();
+  ctx.fillStyle = C.muted; ctx.font = '11px ' + getComputedStyle(document.body).getPropertyValue('--f-mono');
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let m = -2.5; m <= 2.51; m += 0.5) {
+    const major = Math.abs(m - Math.round(m)) < 1e-6;
+    ctx.beginPath(); ctx.moveTo(X(m), gy); ctx.lineTo(X(m), gy + (major ? 8 : 4)); ctx.lineWidth = 1; ctx.stroke();
+    if (major) ctx.fillText((m < 0 ? '−' : '') + Math.abs(m) + (m === 0 ? ' м' : ''), X(m), gy + 11);
+  }
+
+  const s = sim.s, x = s[0], th = s[2];
+  const cw = 0.5 * sc, ch = 0.22 * sc;
+  const cartTop = gy - ch - 0.06 * sc;
+  const px = X(x), py = cartTop + ch * 0.35;
+  const tipX = px + 2 * L * sc * Math.sin(th), tipY = py - 2 * L * sc * Math.cos(th);
+  const driver = sim.mode === 'teacher' ? C.teacher : C.esn;
+
+  // вертикаль и дуга угла
+  ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - 2 * L * sc - 10); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = C.muted;
+  ctx.beginPath(); ctx.arc(px, py, 0.32 * sc, -Math.PI / 2, -Math.PI / 2 + th, th < 0); ctx.stroke();
+
+  // колёса и тележка
+  ctx.fillStyle = C.ink;
+  for (const dx of [-0.16, 0.16]) { ctx.beginPath(); ctx.arc(px + dx * sc, gy - 0.05 * sc, 0.05 * sc, 0, Math.PI * 2); ctx.fill(); }
+  roundRect(ctx, px - cw / 2, cartTop, cw, ch, 5);
+  ctx.fillStyle = C.surface; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = driver; ctx.stroke();
+
+  // стержень: краснеет у порога падения
+  const danger = clamp(Math.abs(th) / THLIM, 0, 1);
+  const poleCol = mixRgb(C.inkRgb, C.warnRgb, danger * danger);
+  ctx.strokeStyle = poleCol; ctx.lineWidth = Math.max(4, 0.045 * sc); ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(tipX, tipY); ctx.stroke();
+  ctx.fillStyle = poleCol;
+  ctx.beginPath(); ctx.arc(tipX, tipY, Math.max(6, 0.06 * sc), 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = C.surface;
+  ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
+
+  // толчок
+  if (sim.kickFlash > 0) {
+    const a = clamp(sim.kickFlash / 0.5, 0, 1);
+    ctx.globalAlpha = a;
+    arrow(ctx, tipX - sim.kickDir * 46, tipY, sim.kickDir * 34, C.warn, false);
+    ctx.globalAlpha = 1;
+    sim.kickFlash -= dtReal;
+  }
+
+  // силы: сплошная — приложенная, пунктир — что сделал бы учитель
+  const fy = cartTop + ch / 2, fs = 0.06 * sc;
+  if (sim.mode !== 'teacher') arrow(ctx, px + Math.sign(sim.lastUT) * cw / 2, fy - 9, sim.lastUT * fs, C.teacher, true);
+  arrow(ctx, px + Math.sign(sim.lastU) * cw / 2, fy + (sim.mode !== 'teacher' ? 7 : 0), sim.lastU * fs, driver, false);
+
+  // подписи
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = C.muted;
+  ctx.fillText(`θ ${(th * 180 / Math.PI).toFixed(1).padStart(6)}°   x ${x.toFixed(2).padStart(5)} м   F ${sim.lastU.toFixed(1).padStart(5)} Н`, 10, 10);
+
+  if (sim.failFlash > 0) {
+    ctx.fillStyle = rgba(C.warnRgb, 0.18 * sim.failFlash / 0.6);
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = C.warn; ctx.textAlign = 'right';
+    ctx.fillText('упал · новый эпизод', w - 10, 10);
+    sim.failFlash -= dtReal;
+  }
+}
+
+// резервуар
+const resC = setupCanvas('res');
+function layoutRes() {
+  if (!R || !resC) return;
+  const { w, h } = resC;
+  const rad = Math.max(10, Math.min(h / 2 - 10, w / 2 - 54));
+  const cx = w / 2, cy = h / 2;
+  const pos = new Float32Array(R.N * 2);
+  for (let i = 0; i < R.N; i++) {
+    const rr = rad * Math.sqrt((i + 0.5) / R.N), a = i * 2.399963;
+    pos[i * 2] = cx + rr * Math.cos(a); pos[i * 2 + 1] = cy + rr * Math.sin(a);
+  }
+  R.pos = pos; R.geo = { cx, cy, rad };
+}
+const order = [];
+function drawRes() {
+  const { ctx, w, h } = resC;
+  if (!R.pos) layoutRes();
+  const { pos, r, w: wo, N } = R, { cx, cy, rad } = R.geo;
+  ctx.clearRect(0, 0, w, h);
+  const font = getComputedStyle(document.body).getPropertyValue('--f-mono');
+
+  // входы
+  const inputs = P_.seeVel ? [['x', 0], ['θ', 1], ['v', 2], ['ω', 3]] : [['x', 0], ['θ', 1]];
+  const ix = 18;
+  ctx.font = '600 12px ' + font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  inputs.forEach(([name, c], k) => {
+    const iy = cy + (k - (inputs.length - 1) / 2) * 30;
+    const act = Math.min(1, Math.abs(obs[c]));
+    ctx.strokeStyle = rgba(C.mutedRgb, 0.12 + 0.25 * act); ctx.lineWidth = 1;
+    for (const j of R.inTop[c]) { ctx.beginPath(); ctx.moveTo(ix, iy); ctx.lineTo(pos[j * 2], pos[j * 2 + 1]); ctx.stroke(); }
+    ctx.fillStyle = C.surface; ctx.strokeStyle = C.muted; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(ix, iy, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = C.ink; ctx.fillText(name, ix, iy + 1);
+  });
+
+  // внутренние связи
+  ctx.lineWidth = 1;
+  for (const [src, dst] of R.edges) {
+    const a = 0.04 + 0.22 * Math.abs(r[src]);
+    ctx.strokeStyle = rgba(C.mutedRgb, a);
+    ctx.beginPath(); ctx.moveTo(pos[src * 2], pos[src * 2 + 1]); ctx.lineTo(pos[dst * 2], pos[dst * 2 + 1]); ctx.stroke();
+  }
+
+  // выход: самые большие вклады w_i·r_i
+  const ox = w - 18, oy = cy;
+  let wmax = 1e-9;
+  for (let i = 0; i < N; i++) wmax = Math.max(wmax, Math.abs(wo[i]));
+  order.length = 0;
+  for (let i = 0; i < N; i++) order.push(i);
+  order.sort((a, b) => Math.abs(wo[b] * r[b]) - Math.abs(wo[a] * r[a]));
+  let cmax = Math.abs(wo[order[0]] * r[order[0]]) || 1e-9;
+  for (let k = 0; k < Math.min(24, N); k++) {
+    const i = order[k], c = wo[i] * r[i], t = Math.abs(c) / cmax;
+    if (t < 0.02) break;
+    ctx.strokeStyle = rgba(c > 0 ? C.posRgb : C.negRgb, 0.15 + 0.6 * t);
+    ctx.lineWidth = 0.5 + 2.5 * t;
+    ctx.beginPath(); ctx.moveTo(pos[i * 2], pos[i * 2 + 1]); ctx.lineTo(ox, oy); ctx.stroke();
+  }
+
+  // нейроны
+  for (let i = 0; i < N; i++) {
+    const a = clamp(r[i], -1, 1);
+    ctx.fillStyle = mixRgb(C.neutralRgb, a > 0 ? C.posRgb : C.negRgb, Math.min(1, Math.abs(a) * 1.4));
+    const sz = 1.8 + 4.5 * Math.sqrt(Math.abs(wo[i]) / wmax) * (sim.trainSteps > 0 ? 1 : 0);
+    ctx.beginPath(); ctx.arc(pos[i * 2], pos[i * 2 + 1], sz, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // узел силы
+  const drv = sim.mode === 'teacher' ? C.teacher : C.esn;
+  ctx.fillStyle = C.surface; ctx.strokeStyle = drv; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(ox, oy, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = drv; ctx.font = '600 12px ' + font; ctx.fillText('F', ox, oy + 1);
+  ctx.fillStyle = C.muted; ctx.font = '11px ' + font;
+  ctx.fillText(sim.lastUE.toFixed(1), ox, oy + 26);
+}
+
+// графики
+const chTh = setupCanvas('chTh'), chF = setupCanvas('chF'), chErr = setupCanvas('chErr');
+function axes(o, yMin, yMax, ticks, xLabels) {
+  const { ctx, w, h } = o;
+  const pad = { l: 34, r: 8, t: 8, b: 18 };
+  const font = getComputedStyle(document.body).getPropertyValue('--f-mono');
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = '10px ' + font; ctx.fillStyle = C.muted; ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
+  const Y = (v) => pad.t + (1 - (v - yMin) / (yMax - yMin)) * (h - pad.t - pad.b);
+  const X = (t) => pad.l + t * (w - pad.l - pad.r);
+  ctx.lineWidth = 1;
+  for (const v of ticks) {
+    ctx.strokeStyle = v === 0 ? C.line : C.grid;
+    ctx.beginPath(); ctx.moveTo(pad.l, Y(v)); ctx.lineTo(w - pad.r, Y(v)); ctx.stroke();
+    ctx.fillText(String(v).replace('-', '−'), pad.l - 5, Y(v));
+  }
+  ctx.textBaseline = 'top';
+  for (const [t, label] of xLabels) {
+    ctx.textAlign = t <= 0 ? 'left' : t >= 1 ? 'right' : 'center';
+    ctx.fillText(label, X(t), h - pad.b + 4);
+  }
+  return { X, Y, ctx };
+}
+const LAST10 = [[0, '−10 с'], [0.5, '−5'], [1, 'сейчас']];
+function line(g, arr, scale, color, width) {
+  const h = sim.h, n = h.len;
+  if (n < 2) return;
+  g.ctx.strokeStyle = color; g.ctx.lineWidth = width; g.ctx.lineJoin = 'round';
+  g.ctx.beginPath();
+  for (let k = 0; k < n; k++) {
+    const idx = (h.head - n + k + HIST) % HIST;
+    const xx = g.X((HIST - n + k) / (HIST - 1)), yy = g.Y(arr[idx] * scale);
+    k ? g.ctx.lineTo(xx, yy) : g.ctx.moveTo(xx, yy);
+  }
+  g.ctx.stroke();
+}
+function drawCharts() {
+  let g = axes(chTh, -45, 45, [-40, -20, 0, 20, 40], LAST10);
+  g.ctx.strokeStyle = rgba(C.warnRgb, 0.7); g.ctx.setLineDash([4, 4]);
+  for (const v of [-40, 40]) { g.ctx.beginPath(); g.ctx.moveTo(g.X(0), g.Y(v)); g.ctx.lineTo(g.X(1), g.Y(v)); g.ctx.stroke(); }
+  g.ctx.setLineDash([]);
+  line(g, sim.h.th, 180 / Math.PI, C.ink, 1.6);
+
+  g = axes(chF, -11, 11, [-10, -5, 0, 5, 10], LAST10);
+  line(g, sim.h.uT, 1, C.teacher, 2);
+  line(g, sim.h.uE, 1, C.esn, 1.3);
+
+  const cv = sim.curve;
+  const tEnd = Math.max(20, sim.t), tStart = cv.length ? Math.min(cv[0][0], tEnd - 20) : 0;
+  let ymax = 1;
+  for (const p of cv) ymax = Math.max(ymax, p[1]);
+  ymax = Math.min(10, Math.ceil(ymax));
+  const step = ymax <= 2 ? 0.5 : ymax <= 5 ? 1 : 2;
+  const ticks = []; for (let v = 0; v <= ymax + 1e-9; v += step) ticks.push(+v.toFixed(1));
+  const span = tEnd - tStart;
+  g = axes(chErr, 0, ymax, ticks, [[0, Math.round(tStart) + ' с'], [0.5, Math.round(tStart + span / 2) + ''], [1, Math.round(tEnd) + ' с']]);
+  for (let k = 1; k < cv.length; k++) {
+    const a = cv[k - 1], b = cv[k];
+    g.ctx.strokeStyle = b[2] ? C.esn : C.teacher; g.ctx.lineWidth = 1.6;
+    g.ctx.beginPath();
+    g.ctx.moveTo(g.X((a[0] - tStart) / span), g.Y(Math.min(ymax, a[1])));
+    g.ctx.lineTo(g.X((b[0] - tStart) / span), g.Y(Math.min(ymax, b[1])));
+    g.ctx.stroke();
+  }
+  if (cv.length) {
+    const p = cv[cv.length - 1];
+    g.ctx.fillStyle = p[2] ? C.esn : C.teacher;
+    g.ctx.beginPath(); g.ctx.arc(g.X((p[0] - tStart) / span), g.Y(Math.min(ymax, p[1])), 3, 0, Math.PI * 2); g.ctx.fill();
+  }
+}
+
+function drawStats() {
+  $('clock').textContent = `t = ${sim.t.toFixed(1)} с`;
+  $('st-ep').innerHTML = `${sim.epT.toFixed(1)} <small>с</small>`;
+  $('st-best').innerHTML = sim.best > 0 ? `${sim.best.toFixed(1)} <small>с</small>` : '—';
+  $('st-fails').textContent = `${sim.fails.teacher} / ${sim.fails.esn}`;
+  $('st-rmse').innerHTML = isFinite(sim.lastRmse) ? `${sim.lastRmse.toFixed(2)} <small>Н</small>` : '—';
+  const tr = sim.trainSteps * DT;
+  $('train-label').textContent = `Обучено ${tr.toFixed(0)} с симуляции · ${sim.trainSteps} шагов RLS`;
+  $('train-bar').style.width = Math.min(100, tr / 90 * 100) + '%';
+  $('res-meta').textContent = `N = ${R.N} · ρ = ${P_.rho.toFixed(2)} · a = ${P_.leak.toFixed(2)} · ${Math.round(R.val.length / R.N)} связей на нейрон`;
+  updateNote();
+}
+
+// ---------- запуск ----------
+buildReservoir(300);
+resetEpisode();
+setMode('teacher');
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) setPaused(true);
+
+let last = performance.now(), acc = 0, statT = 0;
+function frame(now) {
+  const dtReal = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (!sim.paused) {
+    acc += dtReal * P_.speed;
+    let n = 0;
+    while (acc >= DT && n < 600) { simStep(); acc -= DT; n++; }
+    if (n >= 600) acc = 0;
+  }
+  drawStage(dtReal);
+  drawRes();
+  drawCharts();
+  statT += dtReal;
+  if (statT > 0.15) { drawStats(); statT = 0; }
+  requestAnimationFrame(frame);
+}
+drawStats();
+requestAnimationFrame(frame);
+})();
+</script>
