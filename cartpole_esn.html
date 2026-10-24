@@ -112,11 +112,6 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--esn); }
 </style>
 
 <div class="wrap">
-  <header>
-    <p class="eyebrow">Echo State Network · тележка с маятником</p>
-    <h1>Резервуар держит маятник</h1>
-    <p class="lede">Учитель, LQR-регулятор, видит полное состояние системы. <b>Резервуар видит только положение тележки и угол, без скоростей.</b> Внутренние связи резервуара взяты из нервной системы червя <i>C. elegans</i>: 300 нейронов и все синапсы между ними (Cook et al., 2019). Эти связи не меняются. Обучается только линейный выход, методом рекурсивных наименьших квадратов прямо во время симуляции. Скорости резервуар восстанавливает из памяти о недавних входах.</p>
-  </header>
 
   <section class="lab">
     <div class="panel">
@@ -178,7 +173,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--esn); }
 
     <div class="checks">
       <label><input type="checkbox" id="worm" checked> связи из коннектома <i>C. elegans</i></label>
-      <label><input type="checkbox" id="sensIn" checked> вход только в сенсорные нейроны</label>
+      <label><input type="checkbox" id="sensIn"> вход только в сенсорные нейроны</label>
       <label><input type="checkbox" id="seeVel"> резервуар видит скорости</label>
       <label><input type="checkbox" id="kicks" checked> случайные толчки</label>
       <label><input type="checkbox" id="explore" checked> шум учителя при обучении</label>
@@ -319,7 +314,7 @@ const K = lqrGain();
 const teacher = (s) => clamp(-(K[0] * s[0] + K[1] * s[1] + K[2] * s[2] + K[3] * s[3]), -FMAX, FMAX);
 
 // ---------- резервуар ----------
-const P_ = { rho: 0.91, leak: 0.41, inScale: 0.52, noise: 0.002, washout: 200, speed: 3, seeVel: false, kicks: true, explore: true, autoSwitch: true, worm: true, sensIn: true };
+const P_ = { rho: 0.91, leak: 0.41, inScale: 0.52, noise: 0.002, washout: 200, speed: 3, seeVel: false, kicks: true, explore: true, autoSwitch: true, worm: true, sensIn: false };
 let seed = 42;
 let R = null; // текущий резервуар
 
