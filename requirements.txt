@@ -1,4 +1,5 @@
 # Проверено на Python 3.14, numpy 2.5.1, matplotlib 3.11.2, optuna 5.0.0
 numpy>=2.0
 matplotlib>=3.7
-optuna>=3.0  # нужен только для tune_esn.py
+optuna>=3.0  # нужен только для tune_esn.py и compare_esn.py
+scipy>=1.10  # нужен только для compare_esn.py
