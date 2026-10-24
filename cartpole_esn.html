@@ -94,6 +94,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--teacher); o
 .checks label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 input[type="checkbox"], input[type="range"] { accent-color: var(--esn); }
 
+.params { display: grid; gap: 12px; }
+.params summary { cursor: pointer; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.params[open] summary { margin-bottom: 12px; }
 .sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 20px; }
 .sl { display: grid; gap: 2px; font-size: 13px; }
 .sl .top { display: flex; justify-content: space-between; gap: 8px; }
@@ -181,16 +184,19 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--esn); }
       <label><input type="checkbox" id="explore" checked> шум учителя при обучении</label>
     </div>
 
+    <details class="params">
+    <summary>Параметры резервуара</summary>
     <div class="sliders">
       <div class="sl"><div class="top"><label for="sN">Нейронов N</label><output id="oN">300</output></div><input type="range" id="sN" min="50" max="500" step="50" value="300"></div>
-      <div class="sl"><div class="top"><label for="sRho">Спектральный радиус ρ</label><output id="oRho">0.95</output></div><input type="range" id="sRho" min="0" max="1.5" step="0.05" value="0.95"></div>
-      <div class="sl"><div class="top"><label for="sLeak">Leak rate a</label><output id="oLeak">0.40</output></div><input type="range" id="sLeak" min="0.05" max="1" step="0.05" value="0.4"></div>
-      <div class="sl"><div class="top"><label for="sIn">Масштаб входа</label><output id="oIn">1.00</output></div><input type="range" id="sIn" min="0.1" max="3" step="0.1" value="1"></div>
+      <div class="sl"><div class="top"><label for="sRho">Спектральный радиус ρ</label><output id="oRho">0.91</output></div><input type="range" id="sRho" min="0" max="1.5" step="0.01" value="0.91"></div>
+      <div class="sl"><div class="top"><label for="sLeak">Leak rate a</label><output id="oLeak">0.41</output></div><input type="range" id="sLeak" min="0.05" max="1" step="0.01" value="0.41"></div>
+      <div class="sl"><div class="top"><label for="sIn">Масштаб входа</label><output id="oIn">0.52</output></div><input type="range" id="sIn" min="0.1" max="3" step="0.01" value="0.52"></div>
       <div class="sl"><div class="top"><label for="sNoise">Шум датчиков, мм и мрад</label><output id="oNoise">2</output></div><input type="range" id="sNoise" min="0" max="20" step="1" value="2"></div>
       <div class="sl"><div class="top"><label for="sWash">Washout, шагов</label><output id="oWash">200</output></div><input type="range" id="sWash" min="0" max="300" step="10" value="200"></div>
       <div class="sl"><div class="top"><label for="sSpeed">Скорость симуляции</label><output id="oSpeed">3×</output></div><input type="range" id="sSpeed" min="1" max="20" step="1" value="3"></div>
     </div>
     <p class="hint">Попробуйте после обучения поставить ρ = 0 и a = 1. Резервуар теряет память, оценить скорости ему не из чего, и маятник падает.</p>
+    </details>
   </section>
 
   <section class="charts">
@@ -313,7 +319,7 @@ const K = lqrGain();
 const teacher = (s) => clamp(-(K[0] * s[0] + K[1] * s[1] + K[2] * s[2] + K[3] * s[3]), -FMAX, FMAX);
 
 // ---------- резервуар ----------
-const P_ = { rho: 0.95, leak: 0.4, inScale: 1, noise: 0.002, washout: 200, speed: 3, seeVel: false, kicks: true, explore: true, autoSwitch: true, worm: true, sensIn: true };
+const P_ = { rho: 0.91, leak: 0.41, inScale: 0.52, noise: 0.002, washout: 200, speed: 3, seeVel: false, kicks: true, explore: true, autoSwitch: true, worm: true, sensIn: true };
 let seed = 42;
 let R = null; // текущий резервуар
 
