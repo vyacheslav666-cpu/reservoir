@@ -5,13 +5,16 @@ import optuna
 
 import cartpole_esn as ce
 
-# Раздельный подбор гиперпараметров для двух резервуаров: коннектом C. elegans
-# и случайная сеть того же размера. Бюджет одинаковый, W_in и bias общие —
+# Раздельный подбор гиперпараметров для резервуаров: коннектом C. elegans,
+# случайная сеть того же размера и два контроля из самого коннектома —
+# shuffled (те же веса на случайных местах) и rewired (рёбра перемешаны,
+# степени нейронов сохранены). Бюджет одинаковый, W_in и bias общие —
 # режимы отличаются только матрицей W_res.
 # Обучение и тест — те же run() и ridge() из cartpole_esn.py.
 #
 #   python tune_esn.py --trials 200
 #   python tune_esn.py --mode random --trials 200    # только один режим
+#   python tune_esn.py --mode shuffled --trials 200  # контроль топологии
 #   python tune_esn.py --final-only                  # переоценить лучшие из базы
 
 SPACE = {
@@ -49,10 +52,23 @@ rand = np.random.default_rng(1)
 W_rand_values = rand.uniform(-1.0, 1.0, (ce.N, ce.N))
 W_rand_mask = rand.random((ce.N, ce.N))
 
+# Контроли из коннектома: при подборе одна матрица на все trials (сид 1),
+# как у случайной сети; net_seed задаёт другую перестановку
+CONTROLS = {"shuffled": ce.shuffle_edges, "rewired": ce.rewire}
+_controls = {}
 
-def build(mode, p):
+
+def control_matrix(mode, net_seed):
+    if (mode, net_seed) not in _controls:
+        _controls[mode, net_seed] = CONTROLS[mode](W_conn, np.random.default_rng(net_seed))
+    return _controls[mode, net_seed]
+
+
+def build(mode, p, net_seed=1):
     if mode == "connectome":
         W = W_conn.copy()
+    elif mode in CONTROLS:
+        W = control_matrix(mode, net_seed).copy()
     else:
         W = W_rand_values * (W_rand_mask < p["sparsity"])
     W *= p["spectral_radius"] / np.max(np.abs(np.linalg.eigvals(W)))
@@ -63,10 +79,11 @@ def build(mode, p):
     ce.reg = p["reg"]
 
 
-def evaluate(mode, p, seeds, train_steps=15000, dagger_steps=10000, test_steps=TEST_STEPS):
+def evaluate(mode, p, seeds, train_steps=15000, dagger_steps=10000, test_steps=TEST_STEPS,
+             net_seed=1):
     """Учитель → DAgger → тест с толчками, как в cartpole_esn.py.
     Возвращает среднее число падений и RMSE силы резервуар vs учитель."""
-    build(mode, p)
+    build(mode, p, net_seed)
     fails, rmses = [], []
     for seed in seeds:
         np.random.seed(seed)
@@ -113,7 +130,8 @@ def tune(mode, trials, seeds, storage, sampler_seed):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["connectome", "random", "both"], default="both")
+    ap.add_argument("--mode", choices=["connectome", "random", "shuffled", "rewired", "both"],
+                    default="both", help="both — коннектом и случайная сеть")
     ap.add_argument("--trials", type=int, default=200, help="бюджет на каждый режим")
     ap.add_argument("--seeds", type=int, default=3, help="прогонов на trial")
     ap.add_argument("--final-seeds", type=int, default=10, help="прогонов для финальной оценки")

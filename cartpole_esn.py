@@ -104,7 +104,10 @@ def teacher(s):
 # нейроны тормозят (вес со знаком минус). Щелевые контакты (gap junctions)
 # симметричны и всегда возбуждают.
 
-reservoir = "connectome"  # "connectome" или "random" — для сравнения
+# Для сравнения: "random" — случайная сеть, "shuffled" — те же веса коннектома
+# на случайных местах, "rewired" — коннектом с перемешанными рёбрами при
+# сохранённых степенях нейронов
+reservoir = "connectome"
 input_to = "sensory"      # "sensory" — вход только в сенсорные нейроны, "all" — во все
 
 GABA = {"DD01", "DD02", "DD03", "DD04", "DD05", "DD06",
@@ -132,6 +135,39 @@ def load_connectome(path):
     return names, W
 
 
+def shuffle_edges(W, rng):
+    # Контроль: те же веса (со знаками) на случайных местах. Плотность и
+    # распределение весов как у коннектома, структура случайная.
+    # Самосвязи остаются самосвязями, но на случайных нейронах.
+    n = len(W)
+    off = ~np.eye(n, dtype=bool)
+    vals = W[off][W[off] != 0]
+    W2 = np.diag(rng.permutation(np.diag(W)))
+    pos = rng.choice(n * (n - 1), len(vals), replace=False)
+    rows, cols = np.nonzero(off)
+    W2[rows[pos], cols[pos]] = vals
+    return W2
+
+
+def rewire(W, rng, swaps_per_edge=10):
+    # Контроль, сохраняющий степени (Maslov–Sneppen): рёбра a→b и c→d
+    # меняются концами на a→d и c→b. У каждого нейрона остаются число входов,
+    # число выходов и свои исходящие веса (значит, и знак ГАМК); всё
+    # остальное в структуре становится случайным.
+    W2 = W.copy()
+    post, pre = np.nonzero(W2 * ~np.eye(len(W), dtype=bool))
+    edges = list(zip(pre, post))
+    for _ in range(swaps_per_edge * len(edges)):
+        i, j = rng.integers(len(edges), size=2)
+        (a, b), (c, d) = edges[i], edges[j]
+        if a == d or c == b or W2[d, a] or W2[b, c]:
+            continue
+        W2[d, a], W2[b, a] = W2[b, a], 0.0
+        W2[b, c], W2[d, c] = W2[d, c], 0.0
+        edges[i], edges[j] = (a, d), (c, b)
+    return W2
+
+
 names, W_res = load_connectome(os.path.join(os.path.dirname(__file__), "celegans_connectome.csv"))
 N = len(names)
 sparsity = 0.1
@@ -144,6 +180,10 @@ washout = 50
 if reservoir == "random":
     W_res = np.random.uniform(-1.0, 1.0, (N, N))
     W_res *= np.random.rand(N, N) < sparsity
+elif reservoir == "shuffled":
+    W_res = shuffle_edges(W_res, np.random.default_rng(1))
+elif reservoir == "rewired":
+    W_res = rewire(W_res, np.random.default_rng(1))
 W_res *= spectral_radius / np.max(np.abs(np.linalg.eigvals(W_res)))
 
 W_in = np.random.uniform(-1.0, 1.0, (N, 2)) * in_scale
