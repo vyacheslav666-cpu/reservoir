@@ -1,4 +1,8 @@
 import os
+import multiprocessing as mp
+# Матрица 300×300 слишком мала для многопоточного BLAS: запуск потоков дороже
+# самого умножения. В один поток прогон быстрее на ~25%. До импорта numpy.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -86,7 +90,11 @@ for _ in range(3000):
     P = Q + Ad.T @ P @ (Ad - Bd @ K)
 K = K.ravel()
 
-print(f"LQR: K = {np.round(K, 2)}")
+# Процессы tune_esn.py, считающие сиды параллельно, тоже импортируют этот
+# файл; печатает только главный
+verbose = mp.current_process().name == "MainProcess"
+if verbose:
+    print(f"LQR: K = {np.round(K, 2)}")
 
 
 def teacher(s):
@@ -198,10 +206,11 @@ kick_every = None     # (мин, макс) с между толчками; ес�
 kick_strength = 0.8   # сила толчка, рад/с
 obs_scale = np.array([x_lim, 0.2])
 
-print(f"Резервуар: {reservoir}, нейронов: {N}, связей: {np.count_nonzero(W_res)}")
-if input_to == "sensory":
-    print(f"Вход только в сенсорные нейроны: {sensory.sum()} из {N}")
-print(f"Спектральный радиус: {spectral_radius}, leak rate: {lr}")
+if verbose:
+    print(f"Резервуар: {reservoir}, нейронов: {N}, связей: {np.count_nonzero(W_res)}")
+    if input_to == "sensory":
+        print(f"Вход только в сенсорные нейроны: {sensory.sum()} из {N}")
+    print(f"Спектральный радиус: {spectral_radius}, leak rate: {lr}")
 
 
 def observe(s):

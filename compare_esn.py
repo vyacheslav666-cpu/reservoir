@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")  # см. cartpole_esn.py; до импорта numpy
 import numpy as np
 import optuna
 from scipy import stats
@@ -37,10 +38,8 @@ def collect(mode, seeds, storage, cache, plugin=False):
             return res
     study = "esn_connectome" if plugin else f"esn_{mode}"
     p = optuna.load_study(study_name=study, storage=storage).best_trial.params
-    res = []
-    for s in seeds:
-        fails, rmse = te.evaluate(mode, p, [s], net_seed=s if plugin else 1)
-        res.append({"seed": s, "fails": fails, "rmse": rmse})
+    runs = te.run_seeds(mode, p, seeds, net_seeds=seeds if plugin else None)
+    res = [{"seed": s, "fails": f, "rmse": r} for s, (f, r) in zip(seeds, runs)]
     json.dump(res, open(cache, "w"))
     return res
 
@@ -140,8 +139,10 @@ if __name__ == "__main__":
     ap.add_argument("--first-seed", type=int, default=2000,
                     help="не пересекаться с подбором (100–102) и финальной оценкой (1000–1009)")
     ap.add_argument("--storage", default="sqlite:///tune_esn.db")
+    ap.add_argument("--jobs", type=int, default=te.JOBS, help="процессов для прогона сидов")
     args = ap.parse_args()
 
+    te.JOBS = args.jobs
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
     n = args.seeds

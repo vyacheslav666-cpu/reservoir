@@ -1,5 +1,7 @@
 import argparse
 import os
+from concurrent.futures import ProcessPoolExecutor
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")  # см. cartpole_esn.py; до импорта numpy
 import numpy as np
 import optuna
 
@@ -79,22 +81,43 @@ def build(mode, p, net_seed=1):
     ce.reg = p["reg"]
 
 
-def evaluate(mode, p, seeds, train_steps=15000, dagger_steps=10000, test_steps=TEST_STEPS,
-             net_seed=1):
+def run_seed(mode, p, seed, net_seed=1, train_steps=15000, dagger_steps=10000,
+             test_steps=TEST_STEPS):
     """Учитель → DAgger → тест с толчками, как в cartpole_esn.py.
-    Возвращает среднее число падений и RMSE силы резервуар vs учитель."""
+    Возвращает число падений и RMSE силы резервуар vs учитель."""
     build(mode, p, net_seed)
-    fails, rmses = [], []
-    for seed in seeds:
-        np.random.seed(seed)
-        S, Y, _, _ = ce.run(train_steps, beta=1.0)
-        W_out = ce.ridge(S, Y)
-        S2, Y2, _, _ = ce.run(dagger_steps, W_out=W_out, beta=0.5)
-        W_out = ce.ridge(np.vstack([S, S2]), np.concatenate([Y, Y2]))
-        _, _, f, log = ce.run(test_steps, W_out=W_out, beta=0.0,
-                              explore=False, kicks=True, record=True)
-        fails.append(f)
-        rmses.append(np.sqrt(np.mean((np.array(log["u"]) - np.array(log["u_teacher"])) ** 2)))
+    np.random.seed(seed)
+    S, Y, _, _ = ce.run(train_steps, beta=1.0)
+    W_out = ce.ridge(S, Y)
+    S2, Y2, _, _ = ce.run(dagger_steps, W_out=W_out, beta=0.5)
+    W_out = ce.ridge(np.vstack([S, S2]), np.concatenate([Y, Y2]))
+    _, _, f, log = ce.run(test_steps, W_out=W_out, beta=0.0,
+                          explore=False, kicks=True, record=True)
+    return f, float(np.sqrt(np.mean((np.array(log["u"]) - np.array(log["u_teacher"])) ** 2)))
+
+
+JOBS = os.cpu_count()  # процессов для прогона сидов; 1 — всё в текущем процессе
+_pool = None
+
+
+def run_seeds(mode, p, seeds, net_seeds=None, **steps):
+    """[(падения, RMSE)] по сидам. Сиды идут параллельно в JOBS процессах:
+    каждый прогон начинается с np.random.seed(seed), так что результат не
+    зависит от порядка и числа процессов. net_seeds — своя матрица контроля
+    на каждый сид, по умолчанию 1."""
+    global _pool
+    net_seeds = net_seeds or [1] * len(seeds)
+    if JOBS == 1 or len(seeds) == 1:
+        return [run_seed(mode, p, s, n, **steps) for s, n in zip(seeds, net_seeds)]
+    if _pool is None:
+        _pool = ProcessPoolExecutor(JOBS)  # процессы запускаются по мере надобности
+    jobs = [_pool.submit(run_seed, mode, p, s, n, **steps) for s, n in zip(seeds, net_seeds)]
+    return [j.result() for j in jobs]
+
+
+def evaluate(mode, p, seeds, net_seed=1, **steps):
+    """Среднее число падений и RMSE по сидам."""
+    fails, rmses = zip(*run_seeds(mode, p, seeds, [net_seed] * len(seeds), **steps))
     return float(np.mean(fails)), float(np.mean(rmses))
 
 
@@ -137,8 +160,10 @@ if __name__ == "__main__":
     ap.add_argument("--final-seeds", type=int, default=10, help="прогонов для финальной оценки")
     ap.add_argument("--storage", default="sqlite:///tune_esn.db")
     ap.add_argument("--final-only", action="store_true")
+    ap.add_argument("--jobs", type=int, default=JOBS, help="процессов для прогона сидов")
     args = ap.parse_args()
 
+    JOBS = args.jobs
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     modes = ["connectome", "random"] if args.mode == "both" else [args.mode]
     tune_seeds = list(range(100, 100 + args.seeds))
